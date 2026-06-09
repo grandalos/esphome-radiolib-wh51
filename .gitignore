@@ -1,0 +1,6 @@
+.DS_Store
+.esphome/
+.pio/
+.platformio/
+__pycache__/
+*.pyc
