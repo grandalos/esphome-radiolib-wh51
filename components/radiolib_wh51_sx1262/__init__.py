@@ -1,11 +1,26 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import binary_sensor, sensor, text_sensor
-from esphome.const import CONF_FREQUENCY, CONF_ID, CONF_MOISTURE
+from esphome.const import (
+    CONF_DEVICE_CLASS,
+    CONF_ENTITY_CATEGORY,
+    CONF_FREQUENCY,
+    CONF_ID,
+    CONF_MOISTURE,
+    CONF_STATE_CLASS,
+    CONF_UNIT_OF_MEASUREMENT,
+    DEVICE_CLASS_BATTERY,
+    DEVICE_CLASS_HUMIDITY,
+    DEVICE_CLASS_SIGNAL_STRENGTH,
+    DEVICE_CLASS_VOLTAGE,
+    ENTITY_CATEGORY_DIAGNOSTIC,
+    STATE_CLASS_MEASUREMENT,
+)
 
 DEPENDENCIES = ["esp32"]
 
-CONF_SENSOR_ID = "sensor_id"
+CONF_SENSORS = "sensors"
+CONF_SENSOR_ID = "id"
 CONF_BIT_RATE = "bit_rate"
 CONF_FREQUENCY_DEVIATION = "frequency_deviation"
 CONF_BANDWIDTH = "bandwidth"
@@ -37,10 +52,60 @@ CONF_LAST_FRAME = "last_frame"
 ns = cg.esphome_ns.namespace("radiolib_wh51_sx1262")
 RadioLibWH51SX1262 = ns.class_("RadioLibWH51SX1262", cg.Component)
 
+WH51_SENSOR_SCHEMA = cv.Schema(
+    {
+        cv.Required(CONF_SENSOR_ID): cv.hex_uint32_t,
+        cv.Required(CONF_MOISTURE): sensor.sensor_schema(
+            unit_of_measurement="%",
+            device_class=DEVICE_CLASS_HUMIDITY,
+            state_class=STATE_CLASS_MEASUREMENT,
+        ),
+        cv.Required(CONF_RAW_AD): sensor.sensor_schema(
+            state_class=STATE_CLASS_MEASUREMENT,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Required(CONF_BATTERY_VOLTAGE): sensor.sensor_schema(
+            unit_of_measurement="V",
+            device_class=DEVICE_CLASS_VOLTAGE,
+            state_class=STATE_CLASS_MEASUREMENT,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Required(CONF_BATTERY_LEVEL): sensor.sensor_schema(
+            unit_of_measurement="%",
+            device_class=DEVICE_CLASS_BATTERY,
+            state_class=STATE_CLASS_MEASUREMENT,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Required(CONF_BOOST): sensor.sensor_schema(
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Required(CONF_RSSI): sensor.sensor_schema(
+            unit_of_measurement="dBm",
+            device_class=DEVICE_CLASS_SIGNAL_STRENGTH,
+            state_class=STATE_CLASS_MEASUREMENT,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Required(CONF_LOST_FRAMES): sensor.sensor_schema(
+            unit_of_measurement="frames",
+            state_class=STATE_CLASS_MEASUREMENT,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Required(CONF_BATTERY_LOW): binary_sensor.binary_sensor_schema(
+            device_class=DEVICE_CLASS_BATTERY,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Required(CONF_LAST_FRAME): text_sensor.text_sensor_schema(
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+    }
+)
+
 CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(RadioLibWH51SX1262),
-        cv.Required(CONF_SENSOR_ID): cv.hex_uint32_t,
+        cv.Required(CONF_SENSORS): cv.All(
+            cv.ensure_list(WH51_SENSOR_SCHEMA), cv.Length(min=1)
+        ),
         cv.Required(CONF_FREQUENCY): cv.float_range(min=150.0, max=960.0),
         cv.Required(CONF_BIT_RATE): cv.float_range(min=0.6, max=300.0),
         cv.Required(CONF_FREQUENCY_DEVIATION): cv.float_range(min=0.6, max=200.0),
@@ -63,15 +128,6 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_LED_FLASH_DURATION, default="100ms"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_FRAME_INTERVAL, default="70s"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_FRAME_TOLERANCE, default="10s"): cv.positive_time_period_milliseconds,
-        cv.Required(CONF_MOISTURE): sensor.sensor_schema(),
-        cv.Required(CONF_RAW_AD): sensor.sensor_schema(),
-        cv.Required(CONF_BATTERY_VOLTAGE): sensor.sensor_schema(),
-        cv.Required(CONF_BATTERY_LEVEL): sensor.sensor_schema(),
-        cv.Required(CONF_BOOST): sensor.sensor_schema(),
-        cv.Required(CONF_RSSI): sensor.sensor_schema(),
-        cv.Required(CONF_LOST_FRAMES): sensor.sensor_schema(),
-        cv.Required(CONF_BATTERY_LOW): binary_sensor.binary_sensor_schema(),
-        cv.Required(CONF_LAST_FRAME): text_sensor.text_sensor_schema(),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -80,7 +136,6 @@ async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
     cg.add_library("jgromes/RadioLib", "7.7.1")
-    cg.add(var.set_sensor_id(config[CONF_SENSOR_ID]))
     cg.add(var.set_radio_config(
         config[CONF_FREQUENCY],
         config[CONF_BIT_RATE],
@@ -105,19 +160,25 @@ async def to_code(config):
         config[CONF_FRAME_TOLERANCE].total_milliseconds,
     ))
 
-    for key, setter in (
-        (CONF_MOISTURE, var.set_moisture_sensor),
-        (CONF_RAW_AD, var.set_raw_ad_sensor),
-        (CONF_BATTERY_VOLTAGE, var.set_battery_voltage_sensor),
-        (CONF_BATTERY_LEVEL, var.set_battery_level_sensor),
-        (CONF_BOOST, var.set_boost_sensor),
-        (CONF_RSSI, var.set_rssi_sensor),
-        (CONF_LOST_FRAMES, var.set_lost_frames_sensor),
-    ):
-        value = await sensor.new_sensor(config[key])
-        cg.add(setter(value))
-
-    battery_low = await binary_sensor.new_binary_sensor(config[CONF_BATTERY_LOW])
-    cg.add(var.set_battery_low_sensor(battery_low))
-    last_frame = await text_sensor.new_text_sensor(config[CONF_LAST_FRAME])
-    cg.add(var.set_last_frame_sensor(last_frame))
+    for wh51_sensor in config[CONF_SENSORS]:
+        moisture = await sensor.new_sensor(wh51_sensor[CONF_MOISTURE])
+        raw_ad = await sensor.new_sensor(wh51_sensor[CONF_RAW_AD])
+        battery_voltage = await sensor.new_sensor(wh51_sensor[CONF_BATTERY_VOLTAGE])
+        battery_level = await sensor.new_sensor(wh51_sensor[CONF_BATTERY_LEVEL])
+        boost = await sensor.new_sensor(wh51_sensor[CONF_BOOST])
+        rssi = await sensor.new_sensor(wh51_sensor[CONF_RSSI])
+        lost_frames = await sensor.new_sensor(wh51_sensor[CONF_LOST_FRAMES])
+        battery_low = await binary_sensor.new_binary_sensor(wh51_sensor[CONF_BATTERY_LOW])
+        last_frame = await text_sensor.new_text_sensor(wh51_sensor[CONF_LAST_FRAME])
+        cg.add(var.add_sensor(
+            wh51_sensor[CONF_SENSOR_ID],
+            moisture,
+            raw_ad,
+            battery_voltage,
+            battery_level,
+            boost,
+            rssi,
+            lost_frames,
+            battery_low,
+            last_frame,
+        ))

@@ -15,6 +15,14 @@ void RadioLibWH51SX1262::packet_received_() {
     instance_->packet_ready_ = true;
 }
 
+void RadioLibWH51SX1262::add_sensor(uint32_t sensor_id, sensor::Sensor *moisture, sensor::Sensor *raw_ad,
+                                    sensor::Sensor *battery_voltage, sensor::Sensor *battery_level,
+                                    sensor::Sensor *boost, sensor::Sensor *rssi, sensor::Sensor *lost_frames,
+                                    binary_sensor::BinarySensor *battery_low, text_sensor::TextSensor *last_frame) {
+  this->sensors_.push_back({sensor_id, moisture, raw_ad, battery_voltage, battery_level, boost, rssi, lost_frames,
+                            battery_low, last_frame});
+}
+
 void RadioLibWH51SX1262::setup() {
   instance_ = this;
   gpio_set_direction(static_cast<gpio_num_t>(this->antenna_switch_), GPIO_MODE_OUTPUT);
@@ -46,7 +54,8 @@ void RadioLibWH51SX1262::setup() {
     return;
   }
   ESP_LOGI(TAG, "RadioLib SX1262 receiver initialized");
-  this->lost_frames_sensor_->publish_state(0);
+  for (auto &sensor : this->sensors_)
+    sensor.lost_frames->publish_state(0);
 }
 
 void RadioLibWH51SX1262::loop() {
@@ -98,8 +107,17 @@ void RadioLibWH51SX1262::process_packet_(std::array<uint8_t, 14> &frame, float r
 
   const uint32_t sensor_id =
       (static_cast<uint32_t>(frame[1]) << 16) | (static_cast<uint32_t>(frame[2]) << 8) | frame[3];
-  if (sensor_id != this->sensor_id_)
+  auto *matched_sensor = static_cast<Wh51Sensor *>(nullptr);
+  for (auto &sensor : this->sensors_) {
+    if (sensor.id == sensor_id) {
+      matched_sensor = &sensor;
+      break;
+    }
+  }
+  if (matched_sensor == nullptr) {
+    ESP_LOGD(TAG, "Ignoring unconfigured WH51 ID=%06X", sensor_id);
     return;
+  }
   const uint8_t boost = (frame[4] & 0xE0) >> 5;
   const uint16_t battery_mv = (frame[4] & 0x1F) * 100;
   const float battery_level = std::clamp((battery_mv - 700.0f) / 900.0f * 100.0f, 0.0f, 100.0f);
@@ -108,16 +126,16 @@ void RadioLibWH51SX1262::process_packet_(std::array<uint8_t, 14> &frame, float r
   if (moisture > 100)
     return;
 
-  this->handle_valid_frame_();
+  this->handle_valid_frame_(matched_sensor);
   ESP_LOGI(TAG, "WH51 ID=%06X moisture=%u%% AD=%u battery=%.1fV boost=%u RSSI=%.1f", sensor_id, moisture,
            raw_ad, battery_mv / 1000.0f, boost, rssi);
-  this->moisture_sensor_->publish_state(moisture);
-  this->raw_ad_sensor_->publish_state(raw_ad);
-  this->battery_voltage_sensor_->publish_state(battery_mv / 1000.0f);
-  this->battery_level_sensor_->publish_state(battery_level);
-  this->boost_sensor_->publish_state(boost);
-  this->rssi_sensor_->publish_state(rssi);
-  this->battery_low_sensor_->publish_state(battery_mv <= 800);
+  matched_sensor->moisture->publish_state(moisture);
+  matched_sensor->raw_ad->publish_state(raw_ad);
+  matched_sensor->battery_voltage->publish_state(battery_mv / 1000.0f);
+  matched_sensor->battery_level->publish_state(battery_level);
+  matched_sensor->boost->publish_state(boost);
+  matched_sensor->rssi->publish_state(rssi);
+  matched_sensor->battery_low->publish_state(battery_mv <= 800);
 
   const time_t now = time(nullptr);
   if (now > 100000) {
@@ -125,17 +143,17 @@ void RadioLibWH51SX1262::process_packet_(std::array<uint8_t, 14> &frame, float r
     struct tm local_time;
     localtime_r(&now, &local_time);
     strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", &local_time);
-    this->last_frame_sensor_->publish_state(timestamp);
+    matched_sensor->last_frame->publish_state(timestamp);
   }
 }
 
-void RadioLibWH51SX1262::handle_valid_frame_() {
+void RadioLibWH51SX1262::handle_valid_frame_(Wh51Sensor *sensor) {
   const uint32_t now = millis();
   this->set_led_(true);
   this->led_off_at_ = now + this->led_flash_duration_ms_;
-  this->frame_monitoring_started_ = true;
-  this->next_expected_frame_ms_ = now + this->frame_interval_ms_;
-  this->publish_lost_frames_(now);
+  sensor->frame_monitoring_started = true;
+  sensor->next_expected_frame_ms = now + this->frame_interval_ms_;
+  this->publish_lost_frames_(sensor, now);
 }
 
 void RadioLibWH51SX1262::update_frame_monitoring_() {
@@ -144,27 +162,30 @@ void RadioLibWH51SX1262::update_frame_monitoring_() {
     this->set_led_(false);
 
   bool loss_changed = false;
-  if (this->frame_monitoring_started_) {
-    while (static_cast<int32_t>(now - (this->next_expected_frame_ms_ + this->frame_tolerance_ms_)) >= 0) {
-      this->lost_frame_times_.push_back(this->next_expected_frame_ms_);
-      this->next_expected_frame_ms_ += this->frame_interval_ms_;
+  for (auto &sensor : this->sensors_) {
+    loss_changed = false;
+    if (sensor.frame_monitoring_started) {
+      while (static_cast<int32_t>(now - (sensor.next_expected_frame_ms + this->frame_tolerance_ms_)) >= 0) {
+        sensor.lost_frame_times.push_back(sensor.next_expected_frame_ms);
+        sensor.next_expected_frame_ms += this->frame_interval_ms_;
+        loss_changed = true;
+      }
+    }
+
+    while (!sensor.lost_frame_times.empty() &&
+           static_cast<uint32_t>(now - sensor.lost_frame_times.front()) >= LOSS_WINDOW_MS) {
+      sensor.lost_frame_times.pop_front();
       loss_changed = true;
     }
-  }
 
-  while (!this->lost_frame_times_.empty() &&
-         static_cast<uint32_t>(now - this->lost_frame_times_.front()) >= LOSS_WINDOW_MS) {
-    this->lost_frame_times_.pop_front();
-    loss_changed = true;
+    if (loss_changed || static_cast<uint32_t>(now - sensor.last_loss_publish_ms) >= LOSS_PUBLISH_INTERVAL_MS)
+      this->publish_lost_frames_(&sensor, now);
   }
-
-  if (loss_changed || static_cast<uint32_t>(now - this->last_loss_publish_ms_) >= LOSS_PUBLISH_INTERVAL_MS)
-    this->publish_lost_frames_(now);
 }
 
-void RadioLibWH51SX1262::publish_lost_frames_(uint32_t now) {
-  this->last_loss_publish_ms_ = now;
-  this->lost_frames_sensor_->publish_state(this->lost_frame_times_.size());
+void RadioLibWH51SX1262::publish_lost_frames_(Wh51Sensor *sensor, uint32_t now) {
+  sensor->last_loss_publish_ms = now;
+  sensor->lost_frames->publish_state(sensor->lost_frame_times.size());
 }
 
 void RadioLibWH51SX1262::set_led_(bool on) {
@@ -175,7 +196,9 @@ void RadioLibWH51SX1262::set_led_(bool on) {
 
 void RadioLibWH51SX1262::dump_config() {
   ESP_LOGCONFIG(TAG, "RadioLib WH51 SX1262 receiver:");
-  ESP_LOGCONFIG(TAG, "  Sensor ID: %06X", this->sensor_id_);
+  ESP_LOGCONFIG(TAG, "  Configured sensors: %u", this->sensors_.size());
+  for (const auto &sensor : this->sensors_)
+    ESP_LOGCONFIG(TAG, "    WH51 ID: %06X", sensor.id);
   ESP_LOGCONFIG(TAG, "  Frequency: %.3f MHz", this->frequency_);
   ESP_LOGCONFIG(TAG, "  Bit rate: %.3f kbps", this->bit_rate_);
   ESP_LOGCONFIG(TAG, "  Deviation: %.1f kHz", this->deviation_);

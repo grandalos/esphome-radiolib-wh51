@@ -20,7 +20,6 @@ class RadioLibWH51SX1262 : public Component {
   void dump_config() override;
   float get_setup_priority() const override { return setup_priority::HARDWARE; }
 
-  void set_sensor_id(uint32_t value) { this->sensor_id_ = value; }
   void set_radio_config(float frequency, float bit_rate, float deviation, float bandwidth,
                         uint16_t preamble_length, float tcxo_voltage) {
     this->frequency_ = frequency;
@@ -51,22 +50,34 @@ class RadioLibWH51SX1262 : public Component {
     this->frame_tolerance_ms_ = tolerance_ms;
   }
 
-  void set_moisture_sensor(sensor::Sensor *value) { this->moisture_sensor_ = value; }
-  void set_raw_ad_sensor(sensor::Sensor *value) { this->raw_ad_sensor_ = value; }
-  void set_battery_voltage_sensor(sensor::Sensor *value) { this->battery_voltage_sensor_ = value; }
-  void set_battery_level_sensor(sensor::Sensor *value) { this->battery_level_sensor_ = value; }
-  void set_boost_sensor(sensor::Sensor *value) { this->boost_sensor_ = value; }
-  void set_rssi_sensor(sensor::Sensor *value) { this->rssi_sensor_ = value; }
-  void set_lost_frames_sensor(sensor::Sensor *value) { this->lost_frames_sensor_ = value; }
-  void set_battery_low_sensor(binary_sensor::BinarySensor *value) { this->battery_low_sensor_ = value; }
-  void set_last_frame_sensor(text_sensor::TextSensor *value) { this->last_frame_sensor_ = value; }
+  void add_sensor(uint32_t sensor_id, sensor::Sensor *moisture, sensor::Sensor *raw_ad,
+                  sensor::Sensor *battery_voltage, sensor::Sensor *battery_level, sensor::Sensor *boost,
+                  sensor::Sensor *rssi, sensor::Sensor *lost_frames, binary_sensor::BinarySensor *battery_low,
+                  text_sensor::TextSensor *last_frame);
 
  protected:
+  struct Wh51Sensor {
+    uint32_t id;
+    sensor::Sensor *moisture;
+    sensor::Sensor *raw_ad;
+    sensor::Sensor *battery_voltage;
+    sensor::Sensor *battery_level;
+    sensor::Sensor *boost;
+    sensor::Sensor *rssi;
+    sensor::Sensor *lost_frames;
+    binary_sensor::BinarySensor *battery_low;
+    text_sensor::TextSensor *last_frame;
+    uint32_t next_expected_frame_ms{0};
+    uint32_t last_loss_publish_ms{0};
+    bool frame_monitoring_started{false};
+    std::deque<uint32_t> lost_frame_times;
+  };
+
   static void packet_received_();
   void process_packet_(std::array<uint8_t, 14> &frame, float rssi);
-  void handle_valid_frame_();
+  void handle_valid_frame_(Wh51Sensor *sensor);
   void update_frame_monitoring_();
-  void publish_lost_frames_(uint32_t now);
+  void publish_lost_frames_(Wh51Sensor *sensor, uint32_t now);
   void set_led_(bool on);
   static uint8_t crc8_(const uint8_t *data, size_t length);
 
@@ -76,7 +87,7 @@ class RadioLibWH51SX1262 : public Component {
   std::unique_ptr<Module> module_;
   std::unique_ptr<SX1262> radio_;
 
-  uint32_t sensor_id_{0};
+  std::vector<Wh51Sensor> sensors_;
   float frequency_{868.35f};
   float bit_rate_{17.24f};
   float deviation_{33.5f};
@@ -93,20 +104,6 @@ class RadioLibWH51SX1262 : public Component {
 
   uint32_t frame_interval_ms_{70000};
   uint32_t frame_tolerance_ms_{10000};
-  uint32_t next_expected_frame_ms_{0};
-  uint32_t last_loss_publish_ms_{0};
-  bool frame_monitoring_started_{false};
-  std::deque<uint32_t> lost_frame_times_;
-
-  sensor::Sensor *moisture_sensor_{nullptr};
-  sensor::Sensor *raw_ad_sensor_{nullptr};
-  sensor::Sensor *battery_voltage_sensor_{nullptr};
-  sensor::Sensor *battery_level_sensor_{nullptr};
-  sensor::Sensor *boost_sensor_{nullptr};
-  sensor::Sensor *rssi_sensor_{nullptr};
-  sensor::Sensor *lost_frames_sensor_{nullptr};
-  binary_sensor::BinarySensor *battery_low_sensor_{nullptr};
-  text_sensor::TextSensor *last_frame_sensor_{nullptr};
 };
 
 }  // namespace esphome::radiolib_wh51_sx1262

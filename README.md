@@ -28,7 +28,6 @@ external_components:
 
 radiolib_wh51_sx1262:
   id: wh51_radio
-  sensor_id: 0x0FCD59
   frequency: 868.35
   bit_rate: 17.24
   frequency_deviation: 33.5
@@ -52,29 +51,34 @@ radiolib_wh51_sx1262:
   frame_interval: 70s
   frame_tolerance: 10s
 
-  moisture:
-    name: "WH51 Soil Moisture"
-  raw_ad:
-    name: "WH51 Raw AD"
-  battery_voltage:
-    name: "WH51 Battery Voltage"
-  battery_level:
-    name: "WH51 Battery Level"
-  boost:
-    name: "WH51 Transmission Boost"
-  rssi:
-    name: "WH51 RSSI"
-  lost_frames:
-    name: "WH51 Lost Frames - 24h"
-  battery_low:
-    name: "WH51 Battery Low"
-  last_frame:
-    name: "WH51 Last Frame"
+  sensors:
+    - id: 0x0FCD59
+      moisture: { name: "0FCD59 - Soil Moisture" }
+      raw_ad: { name: "0FCD59 - Raw AD" }
+      battery_voltage: { name: "0FCD59 - Battery Voltage" }
+      battery_level: { name: "0FCD59 - Battery Level" }
+      boost: { name: "0FCD59 - Transmission Boost" }
+      rssi: { name: "0FCD59 - RSSI" }
+      lost_frames: { name: "0FCD59 - Lost Frames - 24h" }
+      battery_low: { name: "0FCD59 - Battery Low" }
+      last_frame: { name: "0FCD59 - Last Frame" }
+
+    - id: 0x00D890
+      moisture: { name: "00D890 - Soil Moisture" }
+      raw_ad: { name: "00D890 - Raw AD" }
+      battery_voltage: { name: "00D890 - Battery Voltage" }
+      battery_level: { name: "00D890 - Battery Level" }
+      boost: { name: "00D890 - Transmission Boost" }
+      rssi: { name: "00D890 - RSSI" }
+      lost_frames: { name: "00D890 - Lost Frames - 24h" }
+      battery_low: { name: "00D890 - Battery Low" }
+      last_frame: { name: "00D890 - Last Frame" }
 ```
 
-Frame-loss monitoring starts after the first valid frame. A frame is counted
-as lost when it is not received within `frame_interval + frame_tolerance`.
-The rolling history is kept in RAM and resets when the ESP restarts.
+Frame-loss monitoring is tracked independently for each configured sensor and
+starts after its first valid frame. A frame is counted as lost when it is not
+received within `frame_interval + frame_tolerance`. The rolling history is kept
+in RAM and resets when the ESP restarts.
 
 ## RadioLib version
 
